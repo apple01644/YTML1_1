@@ -1,2 +1,5 @@
 # YTML1_1
-Read and Use HTML like code
+Parse HTML like code
+
+It requires C++17
+
