@@ -9,13 +9,16 @@
 #include <string_view>
 #include <charconv>
 
-namespace YTML1_1
+extern void OutputDebugStringA(const char* lpOutputString);
+
+inline namespace YTML1_1
 {
-	enum class ElementFlag {
+	enum ElementFlag {
 		RatioSizeWidth = 0b1,
 		RatioSizeHeight = 0b10,
 		RatioHorizontalAlign = 0b100,
 		RatioVerticalAlign = 0b1000,
+		Enable = 0b10000,
 	};
 
 	enum class ElementHorizontalAlign {
@@ -39,8 +42,8 @@ namespace YTML1_1
 		float w = 0.f;
 		float h = 0.f;
 	};
-
-	void SplitByBlank(std::vector<std::string_view>& sv, const std::string& s)
+	
+	inline void SplitByBlank(std::vector<std::string_view>& sv, const std::string& s)
 	{
 		size_t start = -1;
 		for (size_t i = 0; i < s.size(); ++i)
@@ -63,32 +66,121 @@ namespace YTML1_1
 			start = -1;
 		}
 	}
+	union FourDirection {
+		DirectX::XMFLOAT4 flt4;
+		struct {
+			float left;
+			float top;
+			float right;
+			float bottom;
+		};
+	};
+
+	extern struct Element;
+
+	
+	inline void ReadCSS(const std::string& path, std::unordered_map<std::string, std::string>& style)
+	{
+		std::ifstream file(path);
+
+		std::string str((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+		file.close();
+
+		size_t size = 0, i = 0, j = 0, k, meta_start;
+		std::string obj;
+		for (i = 0; i < str.size(); ++i) if (const char c = str.at(i); c != '\r' && c != '\n' && c != '\t') ++size;
+		obj.resize(size);
+		for (i = 0; i < str.size(); ++i) if (const char c = str.at(i); c != '\r' && c != '\n' && c != '\t') obj.at(j++) = c;
+
+
+
+		//std::cout << obj << std::endl;
+
+		size_t start = 0;
+		std::vector<std::string_view> sv;
+		for (i = 0; i < obj.size(); ++i)
+		{
+			if (obj.at(i) == '}')
+			{
+				std::string_view s(&obj.at(start), i - start);
+				for (j = 0; j < s.size(); ++j)
+				{
+					if (s.at(j) == '{')
+					{
+						std::string_view meta(&s.at(0), j);
+						std::string_view data(&s.at(j + 1), s.size() - j - 1);
+
+						sv.clear();
+
+						meta_start = -1;
+						for (k = 0; k < meta.size(); ++k)
+						{
+							if (meta.at(k) == ',')
+							{
+								if (meta_start != -1)
+								{
+									sv.push_back(std::string_view(&meta.at(meta_start), k - meta_start));
+									meta_start = -1;
+								}
+							}
+							else if (meta_start == -1) meta_start = k;
+						}
+						if (meta_start != -1)
+						{
+							sv.push_back(std::string_view(&meta.at(meta_start), meta.size() - meta_start));
+							meta_start = -1;
+						}
+
+						for (const auto& hs : sv)
+						{
+							size_t x, y;
+							//Both Trip
+							for (x = 0; x < hs.size(); ++x)
+							{
+								if (hs[x] != ' ') break;
+							}
+							for (y = hs.size(); y > 1; --y)
+							{
+								if (hs[y - 1] != ' ') break;
+							}
+							style[std::string(hs.substr(x, y - x))] = data;
+							//std::cout << hs.substr(x, y - x) << ", ";
+						}
+
+						//std::cout << "~" << data << std::endl;
+						break;
+					}
+				}
+				//std::cout << s << std::endl;
+				start = i + 1;
+			}
+		}
+	}
 
 	struct Element {
-		union {
-			DirectX::XMFLOAT4 flt4;
-			struct {
-				float left;
-				float top;
-				float right;
-				float bottom;
-			};
-		} margin;
+		FourDirection margin, border;
 
 		FloatSize size = { 0.f, 0.f };
 		ElementHorizontalAlign halign = ElementHorizontalAlign::Left;
 		ElementVerticalAlign valign = ElementVerticalAlign::Top;
 		ElementParentClipDirection pclip = ElementParentClipDirection::Horizontal;
+		FloatRect size_in_display;
 
-		uint16_t flags = 0;
+		size_t eid = -1;
+		uint16_t flags = 16;
 
+		std::string head;
 		std::unordered_map<std::string, std::string> tuple;
+		DirectX::XMFLOAT4 background_color = {1.f, 1.f, 1.f, 1.f};
+		DirectX::XMFLOAT4 border_color = { 0.f, 0.f, 0.f, 1.f };
 		
 		Element() {
 			margin.flt4 = { 0.f, 0.f, 0.f, 0.f };
+			border.flt4 = { 0.f, 0.f, 0.f, 0.f };
 		}
 
-		void tupleChanged(const std::string& key) {
+		void tupleChanged(const std::string& key, std::unordered_map<std::string, std::string>& style) {
 			std::cout << "{" << key << ":" << tuple[key]  << "}" << std::endl;
 			const auto& value = tuple[key];
 			bool isWidth = key == "width";
@@ -171,9 +263,221 @@ namespace YTML1_1
 					std::from_chars(v.data(), v.data() + v.size(), this->margin.bottom);
 				}
 			}
+			else if (key == "border")
+			{
+				std::vector<std::string_view> sv;
+				SplitByBlank(sv, value);
+				int i = 0;
+				if (i++ < sv.size())
+				{
+					const auto& v = sv.at(0);
+					std::from_chars(v.data(), v.data() + v.size(), this->border.left);
+				}
+				if (i++ < sv.size())
+				{
+					const auto& v = sv.at(1);
+					std::from_chars(v.data(), v.data() + v.size(), this->border.top);
+				}
+				if (i++ < sv.size())
+				{
+					const auto& v = sv.at(2);
+					std::from_chars(v.data(), v.data() + v.size(), this->border.right);
+				}
+				if (i++ < sv.size())
+				{
+					const auto& v = sv.at(3);
+					std::from_chars(v.data(), v.data() + v.size(), this->border.bottom);
+				}
+			}
+			else if (key == "style")
+			{
+				ReadStyle(value, style);
+			}
+			else if (key == "class")
+			{
+				std::vector<std::string_view> sv;
+				SplitByBlank(sv, value);
 
+				for (const auto& s : sv)
+				{
+					if (auto itr = style.find("." + std::string(s)); itr != style.end())
+					{
+						ReadStyle(itr->second, style);
+					}
+				}
+
+			}
+			else if (key == "id")
+			{
+				std::vector<std::string_view> sv;
+				SplitByBlank(sv, value);
+
+				for (const auto& s : sv)
+				{
+					if (auto itr = style.find("#" + std::string(s)); itr != style.end())
+					{
+						ReadStyle(itr->second, style);
+					}
+				}
+			}
+			else if (key == "background-color")
+			{
+				size_t i, j, len;
+				len = key.size();
+				//Both Trip
+				for (i = 0; i < value.size(); ++i)
+				{
+					if (value[i] != ' ') break;
+				}
+				for (j = value.size(); j > 1; --j)
+				{
+					if (value[j - 1] != ' ') break;
+				}
+				if (value[i] == '#')
+				{
+					std::string s = value.substr(i + 1, j - i - 1);
+
+					int hex = 0;
+
+					sscanf_s(s.c_str(), "%x", &hex);
+					
+					background_color = DirectX::XMFLOAT4(
+					(hex & 0xff) / 255.f,
+					((hex >> 8) & 0xff) / 255.f,
+					((hex >> 16) & 0xff) / 255.f, 1.f);
+
+				}
+			}
+			else if (key == "border-color")
+			{
+				size_t i, j, len;
+				len = key.size();
+				//Both Trip
+				for (i = 0; i < value.size(); ++i)
+				{
+					if (value[i] != ' ') break;
+				}
+				for (j = value.size(); j > 1; --j)
+				{
+					if (value[j - 1] != ' ') break;
+				}
+				if (value[i] == '#')
+				{
+					std::string s = value.substr(i + 1, j - i - 1);
+
+					int hex = 0;
+
+					sscanf_s(s.c_str(), "%x", &hex);
+
+					border_color = DirectX::XMFLOAT4(
+						(hex & 0xff) / 255.f,
+						((hex >> 8) & 0xff) / 255.f,
+						((hex >> 16) & 0xff) / 255.f, 1.f);
+
+				}
+			}
 		}
+
+		void ReadStyle(const std::string str, std::unordered_map<std::string, std::string>& style)
+		{
+			std::vector<std::string_view> sv;
+			size_t start = -1;
+			for (size_t i = 0; i < str.size(); ++i)
+			{
+				if (str.at(i) == ';')
+				{
+					if (start != -1)
+					{
+						sv.push_back(std::string_view(&str.at(start), i - start));
+						start = -1;
+					}
+				}
+				else if (start == -1) start = i;
+			}
+			if (start != -1)
+			{
+				sv.push_back(std::string_view(&str.at(start), str.size() - start));
+				start = -1;
+			}
+
+			for (const auto& s : sv)
+			{
+				for (start = 0; start < s.size(); ++start) if (s.at(start) == ':') break;
+				if (start != s.size())
+				{
+					size_t i = 0, j = 0, size;
+					std::string header, trailer;
+					std::string_view sv;
+
+
+					size = 0;
+					for (i = 0; i < start; ++i) if (s.at(i) != '\n' && s.at(i) != '\r') ++size;
+					header.resize(size);
+					j = 0;
+					for (i = 0; i < start; ++i) if (s.at(i) != '\n' && s.at(i) != '\r') header.at(j++) = s.at(i);
+
+					for (i = 0; i < header.size(); ++i)
+					{
+						if (header[i] != ' ') break;
+					}
+					for (j = header.size(); j > 1; --j)
+					{
+						if (header[j - 1] != ' ') break;
+					}
+
+					header = std::string_view(&header.at(i), j - i);
+
+
+					size = 0;
+					for (i = start + 1; i < s.size(); ++i) if (s.at(i) != '\n' && s.at(i) != '\r') ++size;
+					trailer.resize(size);
+					j = 0;
+					for (i = start + 1; i < s.size(); ++i) if (s.at(i) != '\n' && s.at(i) != '\r') trailer.at(j++) = s.at(i);
+
+					for (i = 0; i < trailer.size(); ++i)
+					{
+						if (trailer[i] != ' ') break;
+					}
+					for (j = trailer.size(); j > 1; --j)
+					{
+						if (trailer[j - 1] != ' ') break;
+					}
+
+					trailer = std::string_view(&trailer.at(i), j - i);
+
+					tuple[header] = trailer;
+					tupleChanged(header, style);
+					//std::cout << "{" << header << "~" << trailer << "}" << std::endl;
+				}
+				else
+				{
+					size_t size = 0, i, j = 0;
+					std::string header;
+
+					size = 0;
+					for (i = 0; i < start; ++i) if (s.at(i) != '\n' && s.at(i) != '\r') ++size;
+					header.resize(size);
+					j = 0;
+					for (i = 0; i < start; ++i) if (s.at(i) != '\n' && s.at(i) != '\r') header.at(j++) = s.at(i);
+
+					for (i = 0; i < header.size(); ++i)
+					{
+						if (header[i] != ' ') break;
+					}
+					for (j = header.size(); j > 1; --j)
+					{
+						if (header[j - 1] != ' ') break;
+					}
+
+					header = std::string_view(&header.at(i), j - i);
+					//std::cout << "[" << header << "]" << std::endl;
+					tuple[header] = "";
+				}
+			}
+		}
+
 	};
+
 
 	struct Tree {
 		Element value;
@@ -182,9 +486,16 @@ namespace YTML1_1
 		[[nodiscard]] Element* operator-> () {
 			return &value;
 		}
+
+		~Tree() {
+			for (const auto p : child)
+			{
+				delete p;
+			}
+		}
 	};
 		
-	void RawLoopTree_L(const std::function<void(Element&)>& func, Tree& tree)
+	inline void RawLoopTree_L(const std::function<void(Element&)>& func, Tree& tree)
 	{
 		func(tree.value);
 		for (size_t _ = 0; _ < tree.child.size(); ++_)
@@ -192,32 +503,75 @@ namespace YTML1_1
 			RawLoopTree_L(func, *tree.child[_]);
 		}
 	}
-
-	void LoopTree_L(const std::function<FloatRect(Element&, FloatRect&)>& func, Tree& tree, FloatRect& rect)
+	inline void RawLoopTree_L(const std::function<void(Element&, bool&)>& func, Tree& tree, bool& b)
 	{
-		auto r = func(tree.value, rect);
+		func(tree.value, b);
+		if (!b) return;
+		for (size_t _ = 0; _ < tree.child.size(); ++_)
+		{
+			RawLoopTree_L(func, *tree.child[_], b);
+			if (!b) return;
+		}
+	}
+
+	inline void RawLoopTree_RL(const std::function<void(Element&)>& func, Tree& tree)
+	{
+		if (tree.child.size() > 0)
+		{
+			size_t _ = tree.child.size() - 1;
+			do
+			{
+				RawLoopTree_RL(func, *tree.child[_]);
+			} while (_-- != 0);
+		}
+		func(tree.value);
+	}
+	inline void RawLoopTree_RL(const std::function<void(Element&, bool&)>& func, Tree& tree, bool& b)
+	{
+		if (tree.child.size() > 0)
+		{
+			size_t _ = tree.child.size() - 1;
+			do
+			{
+				RawLoopTree_RL(func, *tree.child[_], b);
+
+				if (!b) return;
+			} while (_-- != 0);
+		}
+		func(tree.value, b);
+		if (!b) return;
+	}
+
+	inline void LoopTree_L(const std::function<FloatRect(Element&, FloatRect&, bool&)>& func, Tree& tree, FloatRect& rect, bool& run)
+	{
+		auto r = func(tree.value, rect, run);
+		if (!run) return;
 		for (size_t _ = 0; _ < tree.child.size(); ++_)
 		{
 			//std::cout << "index : " << _ << " / " << tree.child.size() << std::endl;
-			LoopTree_L(func, *tree.child[_], rect);
+			LoopTree_L(func, *tree.child[_], rect, run);
+			if (!run) return;
 		}
 		rect = r;
 	}
-	void LoopTree_L(const std::function<FloatRect(Element&, FloatRect&)>& func, Tree& tree)
+	inline void LoopTree_L(const std::function<FloatRect(Element&, FloatRect&, bool&)>& func, Tree& tree)
 	{
+		bool run = true;
 		FloatRect rect = { 0.f, 0.f, tree->size.w, tree->size.h };
-		auto r = func(tree.value, rect);
+		auto r = func(tree.value, rect, run);
+		if (!run) return;
 		
 		for (size_t _ = 0; _ < tree.child.size(); ++_)
 		{
 			//std::cout << "index : " << _ << " / " << tree.child.size() << std::endl;
-			LoopTree_L(func, *tree.child[_], rect);
+			LoopTree_L(func, *tree.child[_], rect, run);
+			if (!run) return;
 		}
 	}
 
-	void RunYTML1_1(YTML1_1::Tree& MainDisplay, const std::function<void(Element&, FloatRect&)>& user_func)
+	inline void RunYTML1_1(YTML1_1::Tree& MainDisplay, const std::function<void(Element&, bool&)>& user_func)
 	{
-		YTML1_1::LoopTree_L([&](YTML1_1::Element & t, YTML1_1::FloatRect r)
+		YTML1_1::LoopTree_L([&](YTML1_1::Element & t, YTML1_1::FloatRect r, bool& run)
 			{
 				YTML1_1::FloatRect rect = r;
 				switch (t.halign)
@@ -253,7 +607,8 @@ namespace YTML1_1
 				rect.w = t.size.w;
 				rect.h = t.size.h;
 				//
-				user_func(t, rect);
+				t.size_in_display = rect;
+				user_func(t, run);
 
 				//Parent Clip
 				switch (t.pclip)
@@ -288,12 +643,12 @@ namespace YTML1_1
 			MainDisplay);
 	}
 
-	bool PossibleVariablename(const char& c)
+	inline bool PossibleVariablename(const char& c)
 	{
 		return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 	}
 
-	void ParseInnerBracket(YTML1_1::Element & e, const std::string_view& s)
+	inline void ParseInnerBracket(YTML1_1::Element & e, const std::string_view& s, std::unordered_map<std::string, std::string>& style)
 	{
 		std::string_view header = "";
 		std::string key;
@@ -307,6 +662,7 @@ namespace YTML1_1
 			if (c == ' ') {
 				header = std::string_view(&s.at(last), i - last);
 				last = i + 1;
+				e.head = header;
 				break;
 			}
 		}
@@ -315,7 +671,7 @@ namespace YTML1_1
 		{
 			//Get Trainer
 			bool wait_for_equal_sign = true;
-			size_t str_index;
+			size_t str_index = -1;
 			bool str_open = false;
 			bool wait_for_varname = true;
 
@@ -348,7 +704,7 @@ namespace YTML1_1
 							//Get value
 
 							e.tuple[key] = s.substr(str_index, i - str_index);
-							e.tupleChanged(key);
+							e.tupleChanged(key, style);
 
 							wait_for_equal_sign = true;
 							last = i + 1;
@@ -367,13 +723,11 @@ namespace YTML1_1
 		}
 	}
 
-	void ReadYTML1_1(const std::string& path, YTML1_1::Tree MainDisplay)
+	inline void ReadYTML1_1(const std::string& path, YTML1_1::Tree& MainDisplay, std::unordered_map<std::string, std::string>& style, size_t& biggest_id)
 	{
 		std::ifstream file(path);
 		std::vector<size_t> ind;
 		
-		MainDisplay->size = { 1280, 800 };
-
 		std::vector<YTML1_1::Tree*> Parent;
 		Parent.push_back(&MainDisplay);
 
@@ -382,11 +736,13 @@ namespace YTML1_1
 
 		std::string str((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
+		file.close();
+
 		bool forward_close = false;
 		bool back_close = false;
 
 		char c;
-		int depth = 0;
+		size_t depth = 0;
 		for (size_t i = 0; i < str.size(); ++i)
 		{
 			c = str[i];
@@ -410,8 +766,9 @@ namespace YTML1_1
 				{
 					//cout << depth << '/' << c;
 					YTML1_1::Tree* e = new YTML1_1::Tree();
+					e->value.eid = biggest_id++;
 
-					ParseInnerBracket(e->value, std::string_view(&str.at(*ind.crbegin()), i - *ind.crbegin() - 1));
+					ParseInnerBracket(e->value, std::string_view(&str.at(*ind.crbegin()), i - *ind.crbegin() - 1), style);
 					//std::cout << "( " << e->value.size.w << ", " << e->value.size.h << " )" << std::endl;
 					(*Parent.rbegin())->child.push_back(e);
 				}
@@ -419,12 +776,14 @@ namespace YTML1_1
 				{
 					//cout << depth << c;
 					YTML1_1::Tree* e = new YTML1_1::Tree();
-					
-					ParseInnerBracket(e->value, std::string_view(&str.at(*ind.crbegin()), i - *ind.crbegin()));
+					e->value.eid = biggest_id++;
+
+					ParseInnerBracket(e->value, std::string_view(&str.at(*ind.crbegin()), i - *ind.crbegin()), style);
 					//std::cout << "( " << e->value.size.w << ", " << e->value.size.h << " )" << std::endl;
 
 					(*Parent.rbegin())->child.push_back(e);
 					Parent.push_back(e);
+
 
 					++depth;
 				}
@@ -438,11 +797,6 @@ namespace YTML1_1
 				break;
 			}
 		}
-		
-		YTML1_1::RunYTML1_1(MainDisplay,
-			[](YTML1_1::Element & e, YTML1_1::FloatRect & f) {
-				std::cout << f.x << ", " << f.y << ", " << f.w << ", " << f.h << " <- ( " << e.size.w << ", " << e.size.h << ")"   << std::endl;
-			}
-		);
 	}
+
 }
