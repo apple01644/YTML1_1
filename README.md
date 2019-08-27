@@ -1,5 +1,10 @@
 # YTML1_1
-Parse HTML like code
+HTML과 유사한 형태의 코드를 이용해서 
+문서 구조를 만들어주는 프로그램입니다.
 
-It requires C++17
+그러나 모든 HTML코드의 문법과 CSS의 문법을 지원하지 않습니다.
+
+# 요구사항
+
+Visual studio C++17 혹은 이상의 버전
 
