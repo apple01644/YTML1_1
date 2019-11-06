@@ -11,7 +11,7 @@ Visual studio C++17 혹은 이상의 버전
 # Parse HTML code 예제
 
 ## somestyle.css
-```
+```css
 .outter-block {
 	width: 340px;
 	height: 120px;
@@ -28,7 +28,7 @@ Visual studio C++17 혹은 이상의 버전
 ```
 
 ## sample.html
-```
+```html
 <div class = " outter-block ">
 	<div class="inner-block"/>
 	<div class="inner-block"/>
@@ -37,7 +37,7 @@ Visual studio C++17 혹은 이상의 버전
 ```
 
 ## 코드
-```
+```cpp
 YTML1_1::Tree MainDisplay;
 size_t max_eid = 1;
 std::unordered_map<std::string, std::string> style;
